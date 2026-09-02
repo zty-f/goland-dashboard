@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GoLand 运行监控</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">LOCAL PERFORMANCE CONSOLE</div>
+      <h1>GoLand 运行监控</h1>
+    </div>
+    <div class="top-actions">
+      <span id="connection" class="status-dot">正在连接</span>
+      <button id="pauseButton" class="button ghost">暂停刷新</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="alertPanel" class="alert hidden"></section>
+
+    <section class="summary-grid">
+      <article class="metric-card accent-blue">
+        <span>GoLand CPU</span><strong id="golandCpu">--</strong><small id="golandMeta">等待数据</small>
+      </article>
+      <article class="metric-card accent-violet">
+        <span>GoLand 内存</span><strong id="golandRss">--</strong><small id="heapMeta">JVM 遥测等待中</small>
+      </article>
+      <article class="metric-card accent-orange">
+        <span>插件工具 CPU</span><strong id="toolsCpu">--</strong><small id="toolsMeta">等待数据</small>
+      </article>
+      <article class="metric-card accent-green">
+        <span>系统可用内存</span><strong id="freeMemory">--</strong><small id="compressedMemory">等待数据</small>
+      </article>
+    </section>
+
+    <section class="panel chart-panel">
+      <div class="panel-title">
+        <div><span class="kicker">最近 4 分钟</span><h2>CPU 与内存趋势</h2></div>
+        <div class="legend"><span class="legend-blue">GoLand CPU</span><span class="legend-orange">工具 CPU</span><span class="legend-violet">RSS / 100MB</span></div>
+      </div>
+      <canvas id="trendChart" height="230"></canvas>
+    </section>
+
+    <section class="two-columns">
+      <article class="panel">
+        <div class="panel-title"><div><span class="kicker">精确进程统计</span><h2>插件与工具分组</h2></div></div>
+        <div id="groupList" class="group-list"></div>
+      </article>
+      <article class="panel">
+        <div class="panel-title"><div><span class="kicker">JVM 内部信号</span><h2>内存与日志嫌疑</h2></div></div>
+        <div id="jvmPanel" class="jvm-panel"></div>
+        <p class="boundary-note">这里是 JVM 整体与插件日志信号，不等同于某个插件的精确 CPU。插件内部代码共享同一个 GoLand JVM，必须通过性能采样或 heap dump 才能最终归因。</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title process-heading">
+        <div><span class="kicker">按当前 CPU 排序</span><h2>GoLand 子进程</h2></div>
+        <label class="toggle"><input id="highOnly" type="checkbox"><span>只看高占用</span></label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>工具</th><th>PID</th><th>CPU</th><th>内存</th><th>运行时间</th><th>风险</th><th>操作</th></tr></thead>
+          <tbody id="processTable"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="stopDialog">
+    <form method="dialog" class="dialog-card">
+      <div class="dialog-icon">!</div>
+      <h2 id="dialogTitle">确认停止</h2>
+      <p id="dialogRisk"></p>
+      <div id="dialogCommand" class="command-preview"></div>
+      <label class="confirm-label">输入下方确认文本：</label>
+      <code id="ackExpected"></code>
+      <input id="ackInput" autocomplete="off" spellcheck="false">
+      <div class="dialog-actions">
+        <button value="cancel" class="button ghost">取消</button>
+        <button id="confirmStop" value="default" type="button" class="button danger" disabled>发送 TERM</button>
+      </div>
+      <p class="dialog-footnote">面板不会发送 SIGKILL，也不会停止 GoLand 主进程。插件可能重新拉起被停止的工具。</p>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
