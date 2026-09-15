@@ -80,7 +80,7 @@ function renderGroups() {
   if (!state.current.groups.length) { root.innerHTML = '<div class="boundary-note">没有发现 GoLand 子进程。</div>'; return; }
   root.innerHTML = state.current.groups.map(group => `
     <div class="group-row">
-      <div class="group-name"><strong>${escapeHtml(group.label)}</strong><small>${group.count} 个进程 · ${group.name}</small></div>
+      <div class="group-name"><strong>${escapeHtml(group.label)}</strong><small>${group.count} 个进程 · ${group.name}${group.projects.length ? ` · ${group.projects.length} 个项目` : ''}${group.sessions.length ? ` · ${group.sessions.length} 个会话` : ''}</small></div>
       <div class="number ${heat(group.cpu)}">${fmt(group.cpu, '%')}</div>
       <div class="number">${fmt(group.rss_mb, ' MB')}</div>
       ${group.can_stop ? `<button class="button small" data-stop-group="${group.name}">停止整组</button>` : '<span class="risk critical">受保护</span>'}
@@ -110,7 +110,7 @@ function renderProcesses() {
   const rows = state.current.processes.filter(p => !highOnly || p.cpu >= state.current.limits.high_cpu || p.rss_mb >= state.current.limits.high_rss_mb);
   $('processTable').innerHTML = rows.length ? rows.map(proc => `
     <tr>
-      <td><div class="process-name"><strong>${escapeHtml(proc.group_label)} · ${escapeHtml(proc.role)}</strong><div class="command" title="${escapeHtml(proc.command)}">${escapeHtml(proc.command)}</div></div></td>
+      <td><div class="process-name"><strong>${escapeHtml(proc.group_label)} · ${escapeHtml(proc.role)}</strong><div class="process-purpose">${escapeHtml(proc.purpose)}</div>${identityHtml(proc)}<div class="command" title="${escapeHtml(proc.command)}">${escapeHtml(proc.command)}</div></div></td>
       <td class="number">${proc.pid}</td>
       <td class="number ${heat(proc.cpu)}">${fmt(proc.cpu, '%')}</td>
       <td class="number">${fmt(proc.rss_mb, ' MB')}</td>
@@ -125,7 +125,8 @@ function openPidDialog(pid) {
   const proc = state.current.processes.find(p => p.pid === pid);
   if (!proc) return;
   state.pending = { scope: 'pid', id: pid, fingerprint: proc.fingerprint };
-  openDialog(`停止 ${proc.group_label}`, proc.risk_text, proc.command, `STOP PID ${pid}`, proc.risk);
+  const identity = [proc.purpose, proc.project_label ? `项目：${proc.project_label}` : '', proc.session_id ? `会话：${proc.session_title || proc.session_short_id} (${proc.session_id})` : '', proc.command].filter(Boolean).join('\n');
+  openDialog(`停止 ${proc.group_label}`, proc.risk_text, identity, `STOP PID ${pid}`, proc.risk);
 }
 
 function openGroupDialog(name) {
@@ -191,6 +192,14 @@ function plot(ctx, values, color, max, w, h, pad) {
 }
 
 function heat(cpu) { return cpu >= 100 ? 'critical-hot' : cpu >= 25 ? 'hot' : ''; }
+function identityHtml(proc) {
+  const chips = [];
+  if (proc.project_label) chips.push(`<span class="identity-chip" title="${escapeHtml(proc.project || proc.project_label)}">项目 ${escapeHtml(proc.project_label)}</span>`);
+  if (proc.session_id) chips.push(`<span class="identity-chip session" title="完整 Session ID：${escapeHtml(proc.session_id)}">会话 ${escapeHtml(proc.session_title || proc.session_short_id)}</span>`);
+  else if (proc.group === 'ccgui' && (proc.role === 'Claude Agent' || proc.role === 'AI bridge')) chips.push('<span class="identity-chip session">会话 ID 未暴露</span>');
+  if (proc.instance) chips.push(`<span class="identity-chip instance">实例 ${escapeHtml(proc.instance)}</span>`);
+  return chips.length ? `<div class="identity-line">${chips.join('')}</div>` : '';
+}
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 function showToast(message) { const toast = $('toast'); toast.textContent = message; toast.classList.remove('hidden'); clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => toast.classList.add('hidden'), 6000); }
 boot().catch(error => { $('connection').className = 'status-dot offline'; $('connection').textContent = '启动失败'; showToast(error.message); });

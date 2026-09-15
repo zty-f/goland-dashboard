@@ -50,6 +50,11 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px 28px 60px; display: grid
 .group-row { display: grid; grid-template-columns: minmax(165px, 1.3fr) 90px 105px 86px; gap: 12px; align-items: center; background: rgba(255,255,255,.025); border: 1px solid #232b3a; border-radius: 10px; padding: 11px 12px; }
 .group-name strong, .process-name strong { display: block; }
 .group-name small, .process-name small { color: var(--muted); }
+.process-purpose { color: #c8d0dd; font-size: 12px; margin-top: 3px; }
+.identity-line { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.identity-chip { display: inline-flex; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; border-radius: 5px; color: #aebbd0; background: rgba(90,167,255,.08); border: 1px solid rgba(90,167,255,.18); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.identity-chip.session { color: #c4b6ff; background: rgba(157,124,255,.08); border-color: rgba(157,124,255,.2); }
+.identity-chip.instance { color: #e2c28d; background: rgba(255,174,87,.07); border-color: rgba(255,174,87,.18); }
 .number { font-variant-numeric: tabular-nums; }
 .hot { color: var(--orange); font-weight: 700; }
 .critical-hot { color: var(--red); font-weight: 700; }
@@ -67,7 +72,7 @@ table { width: 100%; border-collapse: collapse; }
 th { color: var(--muted); text-align: left; font-size: 11px; font-weight: 600; padding: 0 10px 10px; }
 td { padding: 11px 10px; border-top: 1px solid #232b3a; vertical-align: middle; }
 tr:hover td { background: rgba(255,255,255,.018); }
-.command { max-width: 520px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.command { max-width: 560px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #626e81; margin-top: 5px; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .toggle { color: var(--muted); display: flex; gap: 8px; align-items: center; cursor: pointer; }
 .alert { padding: 12px 15px; border: 1px solid rgba(255,101,119,.45); color: #ffc4cc; background: rgba(145,30,52,.2); border-radius: 10px; }
 .hidden { display: none !important; }

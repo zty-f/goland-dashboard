@@ -29,9 +29,13 @@ ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 LOG_DIR = ROOT / "logs"
 JETBRAINS_LOG = Path.home() / "Library/Logs/JetBrains/GoLand2025.3/idea.log"
+JETBRAINS_LOG_DIR = JETBRAINS_LOG.parent
 TELEMETRY_GLOB = str(Path.home() / "Library/Logs/JetBrains/GoLand2025.3/open-telemetry-meters.*.json")
+SESSION_TITLES = Path.home() / ".codemoss/session-titles.json"
 ACTION_TOKEN = secrets.token_urlsafe(32)
 ACTION_LOCK = threading.Lock()
+METADATA_LOCK = threading.Lock()
+METADATA_CACHE: dict[str, Any] = {"time": 0.0, "sessions": {}, "projects": {}, "cwd": {}}
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,133 @@ def classify(command: str) -> tuple[str, str]:
     return "unknown", Path(command.split()[0]).name if command else "Unknown"
 
 
+def command_value(command: str, option: str) -> str | None:
+    match = re.search(rf"(?:^|\s){re.escape(option)}(?:=|\s+)([^\s]+)", command)
+    return match.group(1) if match else None
+
+
+def short_project(path: str | None) -> str | None:
+    if not path:
+        return None
+    home = str(Path.home())
+    return path.replace(home + "/", "~/", 1) if path.startswith(home + "/") else path
+
+
+def metadata_maps() -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    now = time.time()
+    with METADATA_LOCK:
+        if now - float(METADATA_CACHE["time"]) < 15:
+            return METADATA_CACHE["sessions"], METADATA_CACHE["projects"]
+
+        titles: dict[str, Any] = {}
+        try:
+            titles = json.loads(SESSION_TITLES.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        sessions: dict[str, dict[str, Any]] = {}
+        projects: dict[str, str] = {}
+        log_files = sorted(JETBRAINS_LOG_DIR.glob("idea*.log"), key=lambda path: path.stat().st_mtime)
+        for path in log_files:
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            pending_cwd: str | None = None
+            pending_age = 0
+            for line in lines:
+                project_match = re.search(
+                    r"PROJECT_CONFIG_DIR\$, value=(.*?)/\.idea\).*?CACHE_FILE\$, value=.*?/projects/[^/]+\.([0-9a-f]{8})/cache-state\.xml",
+                    line,
+                )
+                if project_match:
+                    projects[project_match.group(2)] = project_match.group(1)
+
+                cwd_match = re.search(r"Using working directory:\s+([^\s)]+)", line)
+                if cwd_match:
+                    pending_cwd = cwd_match.group(1)
+                    pending_age = 0
+                    continue
+                if pending_cwd:
+                    pending_age += 1
+                    session_match = re.search(r"Session ID:\s+([0-9a-f-]{20,})", line)
+                    if session_match:
+                        session_id = session_match.group(1)
+                        title_data = titles.get(session_id) or {}
+                        sessions[pending_cwd] = {
+                            "id": session_id,
+                            "short_id": session_id[:8],
+                            "title": title_data.get("customTitle"),
+                        }
+                        pending_cwd = None
+                    elif pending_age > 120:
+                        pending_cwd = None
+
+        METADATA_CACHE.update({"time": now, "sessions": sessions, "projects": projects})
+        return sessions, projects
+
+
+def process_cwd(pid: int) -> str | None:
+    now = time.time()
+    with METADATA_LOCK:
+        cached = METADATA_CACHE["cwd"].get(pid)
+        if cached and now - cached[0] < 15:
+            return cached[1]
+    output = run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], timeout=2)
+    cwd = next((line[1:] for line in output.splitlines() if line.startswith("n/")), None)
+    with METADATA_LOCK:
+        METADATA_CACHE["cwd"][pid] = (now, cwd)
+    return cwd
+
+
+def describe_process(row: dict[str, Any], group: str, role: str, projects: dict[str, str], sessions: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    command = row["command"]
+    project: str | None = None
+    session: dict[str, Any] | None = None
+    instance: str | None = None
+    purpose = "GoLand 启动的外部工具"
+
+    if group == "codebuddy" and role == "Fusion service":
+        instance = command_value(command, "--logName")
+        project = projects.get(instance or "")
+        purpose = "CodeBuddy 的项目级补全与聊天扩展宿主"
+    elif group == "codebuddy" and role == "Codex ACP":
+        project = process_cwd(row["pid"])
+        purpose = "CodeBuddy 为该项目启动的 Codex Agent 协议服务"
+    elif group == "ccgui" and role == "Claude Agent":
+        project = command_value(command, "--add-dir") or process_cwd(row["pid"])
+        session = sessions.get(project or "")
+        model = command_value(command, "--model")
+        purpose = f"CC GUI 当前工作区的 Claude Agent 会话{f'，模型 {model}' if model else ''}"
+    elif group == "ccgui" and role == "AI bridge":
+        purpose = "CC GUI 与 Claude/Codex SDK 之间的通信桥"
+    elif group == "marscode":
+        project = "所有已打开项目（共享）"
+        purpose = "TraeCode/MarsCode 跨项目共享的 AI、补全与 IPC 服务"
+    elif group == "semantic":
+        purpose = "JetBrains 本地语义搜索与向量模型服务"
+    elif group == "jcef":
+        purpose = "GoLand 内嵌网页界面的 Chromium 渲染进程"
+    elif group == "fsnotifier":
+        purpose = "监听项目文件变化并通知 GoLand"
+    elif group == "terminal":
+        project = process_cwd(row["pid"])
+        purpose = "GoLand 内置终端会话"
+    elif group == "devtool":
+        project = process_cwd(row["pid"])
+        purpose = "项目构建、测试或调试任务"
+
+    return {
+        "purpose": purpose,
+        "project": project,
+        "project_label": short_project(project),
+        "session_id": session.get("id") if session else None,
+        "session_short_id": session.get("short_id") if session else None,
+        "session_title": session.get("title") if session else None,
+        "instance": instance,
+    }
+
+
 def snapshot() -> dict[str, Any]:
     rows = process_rows()
     by_pid = {row["pid"]: row for row in rows}
@@ -148,6 +279,7 @@ def snapshot() -> dict[str, Any]:
                 descendant_ids.add(row["pid"])
                 changed = True
 
+    sessions, project_hashes = metadata_maps()
     direct_kinds = {pid: classify(by_pid[pid]["command"]) for pid in descendant_ids}
     processes: list[dict[str, Any]] = []
     for pid in descendant_ids:
@@ -165,12 +297,34 @@ def snapshot() -> dict[str, Any]:
                     break
                 ancestor = by_pid[ancestor]["ppid"]
         kind = KINDS[group]
+        details = describe_process(row, group, role, project_hashes, sessions)
         row.update({
             "group": group, "group_label": kind.label, "role": role,
             "risk": kind.risk, "risk_text": kind.risk_text, "can_stop": kind.can_stop,
             "fingerprint": fingerprint(row),
+            **details,
         })
         processes.append(row)
+
+    process_index = {proc["pid"]: proc for proc in processes}
+    for proc in processes:
+        if proc["group"] == "ccgui" and proc["role"] == "AI bridge":
+            agent = next((item for item in processes if item["ppid"] == proc["pid"] and item["group"] == "ccgui" and item["role"] == "Claude Agent"), None)
+            if agent:
+                for key in ("project", "project_label", "session_id", "session_short_id", "session_title"):
+                    proc[key] = agent.get(key)
+                proc["purpose"] = "CC GUI 会话通信桥；下方 Claude Agent 承担实际请求"
+            else:
+                proc["purpose"] = "CC GUI 空闲/预热通信桥；当前未发现对应 Agent"
+
+    for proc in processes:
+        if proc["role"] != "Child process":
+            continue
+        ancestor = process_index.get(proc["ppid"])
+        if ancestor and ancestor["group"] == proc["group"]:
+            for key in ("project", "project_label", "session_id", "session_short_id", "session_title", "instance"):
+                proc[key] = ancestor.get(key)
+            proc["purpose"] = f"{ancestor['role']} 派生的辅助进程"
     processes.sort(key=lambda item: (-item["cpu"], -item["rss_mb"], item["pid"]))
 
     groups: list[dict[str, Any]] = []
@@ -184,6 +338,8 @@ def snapshot() -> dict[str, Any]:
             "cpu": round(sum(proc["cpu"] for proc in members), 1),
             "rss_mb": round(sum(proc["rss_mb"] for proc in members), 1),
             "pids": [proc["pid"] for proc in members],
+            "projects": sorted({proc["project_label"] for proc in members if proc.get("project_label")}),
+            "sessions": sorted({proc["session_short_id"] for proc in members if proc.get("session_short_id")}),
         })
     groups.sort(key=lambda item: (-item["cpu"], -item["rss_mb"]))
 
